@@ -238,13 +238,30 @@ def check_R05_단순이설(data: dict) -> list:
             recommendation="단순이설 불가 사유를 구체적으로 기입",
         ))
 
-    # 자가주 인허가 — 체크박스 기반
-    if not is_cb_checked(data, "자가주인허가"):
-        issues.append(ReviewIssue(
-            code="R05-2", severity="MAJOR", category="단순이설",
-            message="자가주 건식 인허가 가능여부가 미확인",
-            recommendation="자가주 인허가 가능 여부를 체크하고 불가 시 사유 기입",
-        ))
+    # R05-2: 자가주 건식 인허가 — 전주 이설이 포함된 경우에만 해당
+    # 판단 기준: 한전주이설 체크박스 OR 전주수량 1본 이상
+    자가주상세 = safe_str(data.get("자가주_인허가"))
+    has_전주이설 = (
+        is_cb_checked(data, "한전주이설") or
+        bool(re.search(r'[1-9]', 전주수량))
+    )
+
+    if has_전주이설:
+        is_해당없음 = "해당 없음" in 자가주상세 or "해당없음" in 자가주상세
+        is_checked = is_cb_checked(data, "자가주인허가")
+
+        if is_checked and not is_해당없음:
+            # 체크된 경우: "인허가 가능"으로 기재된 것이므로 실제 가능 여부를 주의깊게 확인
+            issues.append(ReviewIssue(
+                code="R05-2", severity="MAJOR", category="단순이설",
+                message="자가주 건식 인허가 가능으로 체크됨 — 실제 인허가 가능 여부 주의깊게 확인 필요",
+                recommendation=(
+                    "자가주 인허가 가능으로 표시되어 있습니다. "
+                    "관련 기관(지자체·도로관리청) 확인 및 인허가 취득 가능 여부를 현장 조건과 함께 재검증하세요. "
+                    "불가 시 단순이설 대안 또는 절체사유 보완이 필요합니다."
+                ),
+            ))
+        # 미체크/False 또는 세내역 "해당 없음" 명시 시 → 지적 제외
 
     # 소규모 이설 참고
     try:
@@ -634,8 +651,9 @@ def build_checklist_status(data: dict, rule_results: list) -> list:
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         _mk("⑧ 단순이설 대상 절체이설", "절체이설 불가 사유 기입 (6가지 Case 해당)", ["R05-1"],
             bool(safe_str(data.get("절체사유"))), na=not is_절체),
-        _mk("⑧ 단순이설 대상 절체이설", "자가주 건식 인허가 가능 여부 확인", ["R05-2"],
-            is_cb_checked(data, "자가주인허가")),
+        _mk("⑧ 단순이설 대상 절체이설", "자가주 건식 인허가 가능 여부 확인 (체크 시 주의깊게 검토)", ["R05-2"],
+            True,
+            na=not (is_cb_checked(data, "한전주이설") or bool(re.search(r'[1-9]', safe_str(data.get("전주정보_수량", "")))))),
         _mk("⑧ 단순이설 대상 절체이설", "소규모 이설 — E장주 취부·자가주 건식 검토", ["R05-3"], True),
 
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
