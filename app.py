@@ -397,12 +397,14 @@ with m4:
     st.metric("ℹ️ 참고", f"{len(minor)}건")
 
 # 탭 구성
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab_brief, tab1, tab2, tab3, tab4, tab5, tab_guide = st.tabs([
+    "📌 공사 개요 브리핑",
     "🔴 강화검토 결과",
     "📋 종합 체크리스트",
     "🤖 AI 종합 의견",
     "📷 이미지 분석",
     "📄 리포트 다운로드",
+    "📖 사용자 가이드",
 ])
 
 # --- Tab 1: 강화검토 ---
@@ -432,6 +434,178 @@ with tab1:
 
     if not rule_results:
         st.success("✅ 자동 규칙 검토에서 지적사항이 발견되지 않았습니다.")
+
+# --- Tab 브리핑: 공사 개요 브리핑 ---
+with tab_brief:
+    st.markdown("### 📌 공사 개요 브리핑")
+    st.caption("처음 이 공사를 검토하는 담당자를 위한 종합 브리핑입니다. 엑셀 파싱 데이터 및 Vision 분석 결과를 종합했습니다.")
+
+    cb_all = data.get("_checkboxes", {})
+
+    # ══════════════════════════════════════════
+    # 1. 공사 사유
+    # ══════════════════════════════════════════
+    st.markdown("---")
+    st.markdown("## 1. 공사 사유")
+
+    requesters = []
+    if cb_all.get("이설요청_한전"):      requesters.append("한전")
+    if cb_all.get("이설요청_지자체"):    requesters.append("지자체")
+    if cb_all.get("이설요청_공공기관"): requesters.append("공공기관")
+    if cb_all.get("이설요청_기타"):      requesters.append("기타")
+    requester_str = " / ".join(requesters) if requesters else (safe_str(data.get("요청주체")) or "미확인")
+
+    사업구분_val = safe_str(data.get("사업구분")) or "미기입"
+    공사방안_val = safe_str(data.get("공사방안")) or "미기입"
+    공문번호_val = safe_str(data.get("공문번호")) or "미기입"
+    영배등록_val = "✅ 등록됨" if cb_all.get("이설요청_영배시스템") else "❌ 미등록"
+
+    st.markdown(f"""| 항목 | 내용 |
+|------|------|
+| **요청 주체** | {requester_str} |
+| **사업 구분** | {사업구분_val} |
+| **공사 방안** | {공사방안_val} |
+| **이설요청 공문번호** | {공문번호_val} |
+| **영배시스템 등록** | {영배등록_val} |""")
+
+    reason_parts = []
+    if "한전" in requester_str:      reason_parts.append("한전 전주 이설 요청에 따른 지장이설")
+    if "지자체" in requester_str:    reason_parts.append("지자체 도로공사로 인한 통신선로 지장이설")
+    if "공공기관" in requester_str:  reason_parts.append("공공기관 공사로 인한 지장이설")
+    if not reason_parts:
+        reason_parts.append(f"{사업구분_val} 사업에 따른 통신선로 지장이설")
+
+    with st.container(border=True):
+        st.markdown(f"**📋 공사 사유 요약**\n\n"
+                    f"{' '.join(reason_parts)}. 공사 방안은 **{공사방안_val}**으로 설계되었습니다.")
+
+    # ══════════════════════════════════════════
+    # 2. 공사 환경
+    # ══════════════════════════════════════════
+    st.markdown("---")
+    st.markdown("## 2. 공사 환경")
+
+    현장주소_val = safe_str(data.get("현장주소")) or "미기입"
+    st.markdown(f"**현장 위치**: {현장주소_val}")
+
+    route_parts = []
+    if cb_all.get("기설통신주관로"):
+        r = "기설 통신주/관로 루트 사용"
+        기설상세 = safe_str(data.get("기설루트사용_상세"))
+        if 기설상세: r += f" — {기설상세}"
+        route_parts.append(r)
+    if cb_all.get("병행관로전주"):  route_parts.append("병행 관로/전주 신설")
+    if cb_all.get("단독관로전주"):  route_parts.append("단독 관로/전주 신설")
+    if cb_all.get("한전주이설"):
+        r = "한전주 이설 포함"
+        한전상세 = safe_str(data.get("한전주이설_상세"))
+        if 한전상세: r += f" — {한전상세}"
+        route_parts.append(r)
+
+    if route_parts:
+        st.markdown("**이설 루트:**")
+        for r in route_parts:
+            st.markdown(f"- {r}")
+    else:
+        st.markdown("**이설 루트**: 정보 미기입")
+
+    if ai_result and ai_result.get("construction_understanding"):
+        with st.expander("🧠 Vision AI가 파악한 현장 환경", expanded=True):
+            st.markdown(ai_result["construction_understanding"])
+
+    # ══════════════════════════════════════════
+    # 3. 공사 방법
+    # ══════════════════════════════════════════
+    st.markdown("---")
+    st.markdown("## 3. 공사 방법")
+
+    cables = data.get("_parsed_cables", [])
+    existing_cables = [c for c in cables if "기설" in c.label]
+    new_cables      = [c for c in cables if "다대화" in c.label or ("기설" not in c.label and c.label)]
+
+    if existing_cables:
+        st.markdown("#### 📡 기설 케이블 (이설/철거 대상)")
+        for c in existing_cables:
+            usage_pct = f"{c.usage_rate:.0%}" if c.usage_rate else "—"
+            st.markdown(
+                f"- **{c.label}**: {c.network_tier} | {c.cable_type} | "
+                f"전체 {c.total_cores}C / 사용 {c.used_cores}C ({usage_pct}) | {c.length_m}m"
+            )
+
+    if new_cables:
+        st.markdown("#### 🆕 신설/다대화 케이블")
+        for c in new_cables:
+            st.markdown(
+                f"- **{c.label}**: {c.network_tier} | {c.cable_type} | "
+                f"{c.total_cores}C | {c.length_m}m"
+            )
+
+    work_items = []
+    for key, label in [("절체이설", "절체이설"), ("용량증설", "용량증설"), ("다대화", "다대화")]:
+        qty    = safe_str(data.get(f"{key}_수량"))
+        detail = safe_str(data.get(f"{key}_상세"))
+        if qty and not qty.strip().startswith("0"):
+            work_items.append(f"**{label}** ({qty}): {detail}")
+
+    함체신설 = safe_str(data.get("함체신설_상세"))
+    if 함체신설:
+        work_items.append(f"**함체 신설**: {함체신설}")
+
+    if work_items:
+        st.markdown("#### 🔧 공사 세부 내용")
+        for w in work_items:
+            st.markdown(f"- {w}")
+
+    enclosures = data.get("_parsed_enclosures", [])
+    if enclosures:
+        st.markdown("#### 🏗️ 함체 정보")
+        for e in enclosures:
+            label_e  = getattr(e, "label", "")
+            pole_id  = getattr(e, "pole_id", "—")
+            sk_name  = getattr(e, "sk_name", "—")
+            splice_c = getattr(e, "splice_cores", 0)
+            st.markdown(f"- **{label_e}**: 전산번호 {pole_id} | SK관리 {sk_name} | 접속 {splice_c}C")
+
+    if not existing_cables and not new_cables and not work_items and not enclosures:
+        st.info("케이블/함체 상세 정보가 파싱되지 않았습니다. xlsx의 ENG 시트 데이터를 확인하세요.")
+
+    # ══════════════════════════════════════════
+    # 4. 특이 사항
+    # ══════════════════════════════════════════
+    st.markdown("---")
+    st.markdown("## 4. 특이 사항")
+
+    critical_issues = [r for r in rule_results if r.severity == "CRITICAL"]
+    major_issues    = [r for r in rule_results if r.severity == "MAJOR"]
+
+    if not critical_issues and not major_issues:
+        st.success("✅ 자동 검토 결과 특별한 이슈가 발견되지 않았습니다.")
+    else:
+        if critical_issues:
+            st.error("🚨 **즉시 보완이 필요한 사항 (CRITICAL)**")
+            for r in critical_issues:
+                st.markdown(f"- `[{r.code}]` {r.message}")
+        if major_issues:
+            st.warning("⚠️ **확인이 필요한 사항 (MAJOR)**")
+            for r in major_issues:
+                st.markdown(f"- `[{r.code}]` {r.message}")
+
+    if ai_result and ai_result.get("comprehensive"):
+        st.markdown("#### 🤖 AI 검토의견 핵심 요약")
+        comp_lines = [
+            ln for ln in ai_result["comprehensive"].split("\n")
+            if ln.strip() and not ln.strip().startswith("#")
+        ]
+        if comp_lines:
+            with st.container(border=True):
+                st.markdown("\n".join(comp_lines[:8]))
+            st.caption("전체 AI 의견은 '🤖 AI 종합 의견' 탭에서 확인하세요.")
+
+    stored_expert = results.get("expert_notes", "")
+    if stored_expert:
+        st.markdown("#### 📝 검토담당자 발췌 문제점")
+        with st.container(border=True):
+            st.markdown(stored_expert)
 
 # --- Tab 2: 종합 체크리스트 ---
 with tab2:
@@ -834,6 +1008,211 @@ with tab5:
     st.markdown("---")
     st.markdown("### 리포트 미리보기")
     st.markdown(report)
+
+# --- Tab 가이드: 사용자 가이드 ---
+with tab_guide:
+    st.markdown("# 📖 지장이설 설계검토 Agent — 사용자 가이드")
+    st.caption("이 Agent가 무엇을 어떤 방식으로 검토하는지 설명합니다.")
+
+    # ══════════════════════════════════════════
+    # 1. 시스템 개요
+    # ══════════════════════════════════════════
+    st.markdown("---")
+    st.markdown("## 1. 시스템 개요")
+    with st.container(border=True):
+        st.markdown("""
+지장이설 설계표준안(xlsx)을 업로드하면 **3단계 자동 검토**를 수행하고 Markdown 리포트를 생성합니다.
+
+| 검토 단계 | 방식 | 속도 | 필요 조건 |
+|---------|------|------|----------|
+| 🔴 **강화검토** | 규칙 기반 자동 판정 (R01~R13) | 즉시 | 없음 |
+| 📋 **18대 체크리스트** | 규칙 결과 + 체크박스 상태 종합 (42개 항목) | 즉시 | 없음 |
+| 🤖 **AI 보조검토** | GPT-4o Vision 도면 분석 + 종합 맥락 검토 | 수십 초 | OpenAI API Key |
+| 🟢 **빠른통과** | 9개 필수 항목 기입 여부만 확인 | 즉시 | 없음 |
+""")
+
+    # ══════════════════════════════════════════
+    # 2. 강화검토 규칙 13종 (R01~R13)
+    # ══════════════════════════════════════════
+    st.markdown("---")
+    st.markdown("## 2. 🔴 강화검토 — 규칙 13종 상세")
+    st.caption("각 규칙은 설계 데이터에서 자동으로 값을 추출해 판정합니다. 심각도에 따라 반려/조건부승인/참고로 분류됩니다.")
+
+    st.markdown("""
+| 규칙 코드 | 카테고리 | 검토 내용 | 심각도 | 판정 결과 |
+|----------|---------|----------|--------|---------|
+| **R01-1** | 이설요청근거 | 한전 요청 건인데 이설요청 주체(한전/지자체/공공기관/기타) 및 영배시스템 모두 미체크 | 🚨 CRITICAL | 반려 |
+| **R01-2** | 이설요청근거 | 한전 요청 건인데 이설요청서 미체크 (공문시트 유무에 따라 분기) | 🚨 CRITICAL / ℹ️ INFO | 반려 / 참고 |
+| **R01-3** | 이설요청근거 | 공문번호 미기입 또는 템플릿 기본값(예: "공문번호") 그대로 입력 | ⚠️ MAJOR | 확인필요 |
+| **R01-4** | 이설요청근거 | 도로확장/지중화 공사인데 지자체 문서 미체크 | 🚨 CRITICAL | 반려 |
+| **R01-5** | 이설요청근거 | 공사유형 가~마 중 아무것도 미선택 | ⚠️ MAJOR | 확인필요 |
+| **R02** | 사업구분 | 공사명 키워드와 사업구분 불일치 (예: "도로확장"인데 사업구분이 "한전주이설") | ⚠️ MAJOR | 확인필요 |
+| **R03** | 접속코어 | 접속코어 합계가 12C 단위 올림 규칙 위반 / 기설케이블 코어수 대비 120% 초과 | 🚨 CRITICAL / ⚠️ MAJOR / 💡 MINOR | 반려 / 확인 |
+| **R04** | 용량과다 | 신설 케이블 사용률 60% 미만 (용량 과다 선정 의심) | 🚨 CRITICAL / ⚠️ MAJOR | 반려 / 확인 |
+| **R05** | 단순이설 | 단순이설 가능 구간인데 절체이설로 설계 (접속코어 과다, 불필요한 공사) | ⚠️ MAJOR | 확인필요 |
+| **R06** | 다대화 | 다대화 설계 시 대상 케이블 선정 적정성 검토 | ⚠️ MAJOR | 확인필요 |
+| **R07** | 실사비/설계비 | 공사비 산출 기준 오적용 (실사비 vs 설계비 구분 오류) | ⚠️ MAJOR | 확인필요 |
+| **R08** | 공사유형 | 공사유형 체크 상태와 공사방안 불일치 | ⚠️ MAJOR | 확인필요 |
+| **R09** | RM | RM(원격 모니터링) 관련 설계 적정성 | ⚠️ MAJOR | 확인필요 |
+| **R10** | 포설거리 | 케이블 포설 거리 기준 초과 (MAJOR) 또는 경계 (MINOR) | ⚠️ MAJOR / 💡 MINOR | 확인 / 참고 |
+| **R11** | 기입완전성 | 필수 설계 항목 미기입 (공사명, 현장주소, 공사비 등) | ⚠️ MAJOR | 확인필요 |
+| **R12** | 병행공사 | 병행공사 체크 시 관련 정보(타사명, 공정 등) 미기입 | ⚠️ MAJOR | 확인필요 |
+| **R13** | 원인자 | 원인자 공사 해당 시 원인자 판정조서 미체크 | ⚠️ MAJOR | 확인필요 |
+
+> **심각도 기준**: 🚨 CRITICAL = 반려 사유 (즉시 보완 필수) / ⚠️ MAJOR = 조건부 승인 / 💡 MINOR = 경미 / ℹ️ INFO = 참고
+""")
+
+    # ══════════════════════════════════════════
+    # 3. 18대 체크리스트
+    # ══════════════════════════════════════════
+    st.markdown("---")
+    st.markdown("## 3. 📋 18대 체크리스트 — 42개 항목 상세")
+    st.caption("실제 설계검토 전담인력이 사용하는 18대 기준을 42개 세부 항목으로 확장했습니다. 각 항목은 규칙 결과 또는 데이터 기입 상태로 자동 판정됩니다.")
+
+    st.markdown("""
+| 번호 | 체크리스트 항목 | 연계 규칙 | 검토 방식 | 상태 판정 기준 |
+|------|--------------|---------|---------|-------------|
+| ① | 지장이설 공사 근거 미비 | R01-1~5 | 자동 (체크박스+공문번호) | 이설요청 주체 체크 + 공문번호 기입 여부 |
+| ② | 사업구분 오류 | R02 | 자동 (공사명 키워드 분석) | 공사명 텍스트와 사업구분 일치 여부 |
+| ③ | 접속코어 과다산출 | R03 | 자동 (수치 계산) | 12C 올림 규칙 + 기설케이블 대비 비율 |
+| ④ | 케이블 용량 과다선정 | R04 | 자동 (사용률 계산) | 신설케이블 사용률 60% 미만 여부 |
+| ⑤ | 케이블 종류 오선정 | 부분 | Vision AI 확인 필요 | 도면상 케이블 타입(Dry/MSLT) 확인 |
+| ⑥ | 케이블 과다거리 포설 | R10 | 자동 (거리 수치 비교) | 포설거리 기준치 초과 여부 |
+| ⑦ | 다대화 대상 오선정 | R06 | 자동 | 다대화 설계 적정성 |
+| ⑧ | 단순이설 대상 절체이설 | R05 | 자동 | 단순이설 가능 여부 vs 절체이설 설계 |
+| ⑩ | 원인자 대상 지장이설 설계 | R13 | 자동 (체크박스) | 원인자 판정조서 체크 여부 |
+| ⑪ | 기설 시설물 미사용 | 부분 | Vision AI 확인 필요 | 기설 전주/함체 재활용 여부 (도면 확인) |
+| ⑫ | 기설 시설물 철거설계 | 부분 | Vision AI 확인 필요 | 철거 계획 적정성 (도면 확인) |
+| ⑬ | 실사비·설계비 오적용 | R07 | 자동 + AI 보조 | 공사비 산출 기준 적용 오류 |
+| ⑭ | 타사주관 설계 검토 미비 | R12 | 자동 + AI 보조 | 병행공사 관련 정보 기입 완전성 |
+| ⑮ | 관로 굴착공사 기준 위배 | — | Vision AI 확인 필요 | 관로 굴착 계획 도면 분석 |
+| ⑯ | 현장실사 내용 불일치 | 부분 | Vision AI 확인 필요 | 설계 내용 vs 현장사진 일치 여부 |
+| ⑰ | 기타 | R08, R09 | 자동 | 공사유형 불일치, RM 검토 |
+| ⑱ | 특이사항 없음 | — | 검토자 판단 | 위 항목 모두 적합일 때 해당 |
+
+> ⑨번 항목은 공식 체크리스트에 없음 (⑧에서 ⑩으로 이어짐)
+
+**상태 표시 기준:**
+
+| 상태 | 의미 | 발생 조건 |
+|------|------|---------|
+| ✅ 적합 | 이상 없음 | 연계 규칙 미발화 + 데이터 정상 기입 |
+| 🚨 보완필요 | 즉시 수정 필요 | 연계 규칙 CRITICAL 발화 |
+| ⚠️ 확인필요 | 검토자 확인 필요 | 연계 규칙 MAJOR 발화 또는 데이터 미기입 |
+| ℹ️ 참고 | 정보 제공 | 연계 규칙 INFO 발화 |
+| ➖ 해당없음 | 이 공사에 해당 없음 | 조건 미충족 (예: 한전 요청 건 아님) |
+""")
+
+    # ══════════════════════════════════════════
+    # 4. 빠른통과 항목
+    # ══════════════════════════════════════════
+    st.markdown("---")
+    st.markdown("## 4. 🟢 빠른통과 — 9개 필수 기입 항목")
+    st.caption("설계서의 기본 필수 항목이 입력되어 있는지만 확인합니다. 내용의 적정성은 강화검토에서 별도 판정합니다.")
+
+    st.markdown("""
+| 항목 | 확인 방법 | 기준 |
+|------|---------|------|
+| 공사명 | 셀 값 존재 여부 | 빈 값 또는 기본 템플릿 텍스트이면 ❌ |
+| 현장주소 | 셀 값 존재 여부 | 미기입이면 ❌ |
+| 사업구분 | 셀 값 존재 여부 | 미기입이면 ❌ |
+| 공사방안 | 셀 값 존재 여부 | 미기입이면 ❌ |
+| 요청주체 | 셀 값 존재 여부 | 미기입이면 ❌ |
+| 공문번호 | 셀 값 + 기본값 체크 | "공문번호" 등 기본값이면 ❌ |
+| 공사비 | 숫자 존재 여부 | 0원 또는 미기입이면 ❌ |
+| 접속코어합계 | 숫자 존재 여부 | 미기입이면 ❌ |
+| 케이블 정보 | 기설케이블 1개 이상 | 파싱된 케이블 정보 없으면 ❌ |
+""")
+
+    # ══════════════════════════════════════════
+    # 5. AI 보조검토
+    # ══════════════════════════════════════════
+    st.markdown("---")
+    st.markdown("## 5. 🤖 AI 보조검토 — GPT-4o Vision 분석")
+    st.caption("OpenAI API Key 입력 시 활성화됩니다. 이미지 분석과 종합 맥락 검토를 수행합니다.")
+
+    st.markdown("""
+### 이미지 분석 우선순위 (4단계)
+
+| 우선순위 | 모드 | 조건 | 분석 내용 |
+|---------|------|------|---------|
+| 1순위 | 📤 사용자 업로드 | GIS/개황도 이미지 직접 업로드 시 | 업로드한 이미지 3장 통합 분석 (가장 정확) |
+| 2순위 | 📸 전체 스냅샷 | LibreOffice 설치 시 자동 생성 | 행정도 전체 뷰 (지도+선+심볼+텍스트) |
+| 3순위 | 📎 개별 이미지 | xlsx 내부 이미지 추출 | 시트별 삽입 이미지 개별 분석 |
+| 4순위 | 📝 텍스트 전용 | 이미지 없을 때 | ENG시트 파싱 데이터만 LLM 검토 |
+
+### Vision AI 분석 항목
+
+| 분석 항목 | 내용 |
+|---------|------|
+| 신설 계획 파악 | 도면에서 신설 케이블(빨간 점선), 신설 전주(빨간 C), 신설 함체(빨간 P) 식별 |
+| 철거 계획 파악 | 도면에서 철거 케이블(검정 실선), 철거 전주/함체(검정 심볼) 식별 |
+| 기설 시설물 활용 | 기존 전주/함체/관로를 신설에 재활용하는지 확인 |
+| 전/후 비교 | 개황도 전/후 비교 → 시설물 변경 사항 추출 |
+| 케이블 종류 확인 | Dry vs MSLT 케이블 타입 도면 확인 (⑤ 체크리스트) |
+| 관로 굴착 확인 | 굴착 계획의 기준 위배 여부 (⑮ 체크리스트) |
+| 현장사진 대조 | 설계 내용과 현장사진의 실제 상황 일치 여부 (⑯ 체크리스트) |
+| 공사 이해 요약 | 도면을 바탕으로 공사 전체 맥락 요약 (공사 개요 브리핑 탭에 반영) |
+
+### 종합 검토 (LLM)
+
+- 설계 데이터 전체(ENG시트 파싱 결과) + 규칙 검토 결과를 LLM에 입력
+- **검토담당자 발췌 문제점** 입력 시 해당 항목 최우선·심층 분석
+- 18대 체크리스트 기준으로 설계의 전체적 적정성 종합 의견 제공
+""")
+
+    # ══════════════════════════════════════════
+    # 6. 탭별 활용 방법
+    # ══════════════════════════════════════════
+    st.markdown("---")
+    st.markdown("## 6. 탭별 활용 가이드")
+
+    st.markdown("""
+| 탭 | 주요 용도 | 핵심 확인 포인트 |
+|---|---------|--------------|
+| 📌 **공사 개요 브리핑** | 공사를 처음 보는 검토자용 요약 | 공사 사유, 환경, 방법, 특이사항 |
+| 🔴 **강화검토 결과** | 즉각적인 합격/반려 판단 | CRITICAL 항목 존재 여부 |
+| 📋 **종합 체크리스트** | 18대 기준 전체 현황 파악 | 빨간(🚨)/노란(⚠️) 항목 수 |
+| 🤖 **AI 종합 의견** | LLM의 종합적 판단 및 권고 | 담당자 발췌 문제점 반영 여부 |
+| 📷 **이미지 분석** | 도면 Vision 분석 결과 확인 | 통합 분석 주요 발견사항 |
+| 📄 **리포트 다운로드** | 최종 검토 결과 문서화 | Markdown 파일 다운로드 |
+
+### 검토 판정 기준
+
+| 종합 판정 | 조건 | 권장 조치 |
+|---------|------|---------|
+| 🔴 보완요청 | CRITICAL 1건 이상 | 설계 수정 후 재검토 |
+| 🟡 확인필요 | MAJOR 1건 이상 (CRITICAL 없음) | 해당 항목 직접 확인 후 판단 |
+| 🟢 적합 | CRITICAL/MAJOR 모두 없음 | 승인 가능 (MINOR/INFO는 참고) |
+""")
+
+    # ══════════════════════════════════════════
+    # 7. 주의사항 및 한계
+    # ══════════════════════════════════════════
+    st.markdown("---")
+    st.markdown("## 7. ⚠️ 주의사항 및 한계")
+
+    st.warning("""
+**이 Agent의 검토 한계 — 반드시 읽어주세요**
+
+- **체크박스 파싱 정확도**: xlsx 파일의 체크박스는 VML/ctrlProp XML 방식으로 파싱하며, Excel 버전에 따라 미검출될 수 있습니다. "체크박스 모두 False" 상태라면 Excel에서 파일을 열고 다시 저장 후 재업로드하세요.
+- **GIS 데이터 미검증**: GIS 시스템의 실제 선로 현황과 교차 검증하지 않습니다. 도면상 거리/코어수만 참조합니다.
+- **Vision AI 한계**: 이미지 해상도, 도면 복잡도에 따라 판독 정확도가 달라집니다. 직접 업로드 이미지를 사용하면 정확도가 향상됩니다.
+- **최종 판단은 검토자**: 본 Agent는 보조 도구이며, 모든 규칙 판정 결과는 검토자가 최종 확인해야 합니다.
+- **공사유형별 특수 규칙**: 일부 공사유형(관로 굴착, 맨홀 신설 등)에 대한 세부 기준은 반영되지 않을 수 있습니다.
+""")
+
+    st.markdown("""
+### 파일 형식 요구사항
+
+| 항목 | 요구사항 |
+|------|---------|
+| 파일 형식 | `.xlsx` (xlsx 전용, `.xls` 구형 형식 불가) |
+| ENG 시트 | "ENG", "Eng", "eng" 등 퍼지 매칭으로 자동 탐지 |
+| 체크박스 | Excel Form Control 체크박스 (ActiveX 체크박스 미지원) |
+| 이미지 | xlsx 내부 삽입 이미지 자동 추출, 또는 별도 업로드 가능 |
+| 인코딩 | UTF-8 호환 (한글 공사명 등 정상 처리) |
+""")
 
 # ============================================================
 # 푸터
