@@ -397,43 +397,14 @@ with m4:
     st.metric("ℹ️ 참고", f"{len(minor)}건")
 
 # 탭 구성
-tab_brief, tab1, tab2, tab3, tab4, tab5, tab_guide = st.tabs([
+tab_brief, tab2, tab3, tab4, tab5, tab_guide = st.tabs([
     "📌 공사 개요 브리핑",
-    "🔴 강화검토 결과",
-    "📋 종합 체크리스트",
+    "📋 종합 검토 결과",
     "🤖 AI 종합 의견",
     "📷 이미지 분석",
     "📄 리포트 다운로드",
     "📖 사용자 가이드",
 ])
-
-# --- Tab 1: 강화검토 ---
-with tab1:
-    if critical:
-        st.error(f"🚨 **심각(CRITICAL) 지적사항: {len(critical)}건** — 즉시 보완 필요")
-        for r in critical:
-            with st.expander(f"🚨 [{r.code}] {r.message}", expanded=True):
-                st.markdown(f"**카테고리**: {r.category}")
-                st.markdown(f"**권고사항**: {r.recommendation}")
-                if r.savings_hint:
-                    st.info(f"💰 {r.savings_hint}")
-
-    if major:
-        st.warning(f"⚠️ **주요(MAJOR) 지적사항: {len(major)}건** — 확인 필요")
-        for r in major:
-            with st.expander(f"⚠️ [{r.code}] {r.message}"):
-                st.markdown(f"**카테고리**: {r.category}")
-                st.markdown(f"**권고사항**: {r.recommendation}")
-
-    if minor:
-        st.info(f"ℹ️ **참고사항: {len(minor)}건**")
-        for r in minor:
-            with st.expander(f"ℹ️ [{r.code}] {r.message}"):
-                st.markdown(f"**카테고리**: {r.category}")
-                st.markdown(f"**권고사항**: {r.recommendation}")
-
-    if not rule_results:
-        st.success("✅ 자동 규칙 검토에서 지적사항이 발견되지 않았습니다.")
 
 # --- Tab 브리핑: 공사 개요 브리핑 ---
 with tab_brief:
@@ -607,10 +578,39 @@ with tab_brief:
         with st.container(border=True):
             st.markdown(stored_expert)
 
-# --- Tab 2: 종합 체크리스트 ---
+# --- Tab 2: 종합 검토 결과 (강화검토 + 체크리스트 통합) ---
 with tab2:
-    st.markdown("### 📋 설계서 종합 체크리스트")
-    st.caption("모든 검토 항목의 보완 필요 여부를 한눈에 확인합니다.")
+    st.markdown("### 📋 종합 검토 결과")
+    st.caption("규칙 기반 자동 검토 지적사항과 18대 체크리스트 현황을 한 화면에서 확인합니다.")
+
+    # ── 지적사항 상세 ──────────────────────────────────────
+    if not rule_results:
+        st.success("✅ 자동 규칙 검토에서 지적사항이 발견되지 않았습니다.")
+    else:
+        if critical:
+            st.error(f"🚨 **즉시 보완 필요 — CRITICAL {len(critical)}건**")
+            for r in critical:
+                with st.expander(f"🚨 [{r.code}] {r.message}", expanded=True):
+                    st.markdown(f"**카테고리**: {r.category}")
+                    st.markdown(f"**권고사항**: {r.recommendation}")
+                    if r.savings_hint:
+                        st.info(f"💰 {r.savings_hint}")
+
+        if major:
+            st.warning(f"⚠️ **확인 필요 — MAJOR {len(major)}건**")
+            for r in major:
+                with st.expander(f"⚠️ [{r.code}] {r.message}"):
+                    st.markdown(f"**카테고리**: {r.category}")
+                    st.markdown(f"**권고사항**: {r.recommendation}")
+
+        if minor:
+            with st.expander(f"ℹ️ 참고사항 {len(minor)}건 (클릭하여 펼치기)", expanded=False):
+                for r in minor:
+                    st.markdown(f"**[{r.code}]** {r.message}")
+                    st.caption(f"↳ {r.recommendation}")
+
+    st.markdown("---")
+    st.markdown("### 📋 18대 체크리스트 전체 현황")
 
     checklist = build_checklist_status(data, rule_results)
 
